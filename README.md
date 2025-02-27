@@ -157,6 +157,7 @@ OPENAI_API_KEY=your_api_key_here
    python -m twtw.cli --skip-fetch  # Skip fetching feeds
    python -m twtw.cli --limit 0  # Process all articles in the feed (no limit)
    python -m twtw.cli --use-local-model  # Use local model instead of OpenAI
+   python -m twtw.cli --skip-today-folder  # Skip including atom feeds from 'today' folder
    ```
 
    By default, the application will process all articles in the feed. You can use the `--limit` option to specify a maximum number of articles to process, or set it to `0` to process all articles (which is now the default behavior).
@@ -216,6 +217,9 @@ OPENAI_API_KEY=your_api_key_here
    
    # Skip both fetching and processing, just regenerate HTML
    python -m twtw.cli --skip-fetch --skip-process
+   
+   # Skip including atom feeds from the 'today' folder
+   python -m twtw.cli --skip-today-folder
    ```
 
 ### Output Files
@@ -277,6 +281,45 @@ After running the generator, you'll find the following files in your output dire
 4. **Cache Management**:
    - If articles aren't updating, try running with `--refresh-cache`
    - The cache is stored in the `cache` directory and can be deleted to start fresh
+
+### Using the 'Today' Folder
+
+The 'today' folder feature allows you to combine feeds from multiple sources:
+
+1. **How It Works**:
+   - Create a folder named `today` in the project root directory
+   - Place Atom feed files (with `.atom` extension) in this folder
+   - By default, the system will automatically include these feeds along with those from `feeds.txt`
+   - If you want to skip the 'today' folder, use the `--skip-today-folder` option
+   - The system will:
+     - Download feeds from `feeds.txt` as usual
+     - Include all Atom feeds from the 'today' folder (unless skipped with `--skip-today-folder`)
+     - Combine all articles, removing duplicates (based on URLs)
+     - Generate the newsletter with all unique articles
+
+2. **Use Cases**:
+   - Save feeds from previous days to include in today's newsletter
+   - Add manually created or edited feed files
+   - Combine feeds from different sources
+   - Test with a mix of real and sample feed data
+
+3. **Example**:
+   ```bash
+   # First, create a 'today' folder and add some Atom feeds
+   mkdir today
+   cp old_feeds/*.atom today/
+   
+   # Then run the generator (it will automatically include the 'today' folder by default)
+   python -m twtw.cli
+   
+   # If you want to skip the 'today' folder
+   python -m twtw.cli --skip-today-folder
+   ```
+
+4. **Notes**:
+   - If a feed file with the same name exists in both the 'today' folder and is downloaded from `feeds.txt`, the downloaded version will take precedence
+   - Duplicate articles (with the same URL) will be automatically removed
+   - The system logs which feeds were found and which duplicates were removed
 
 ### Tips for Best Results
 

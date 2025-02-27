@@ -31,7 +31,7 @@ class FeedlyFetcher:
         Read feed URLs from a text file.
         
         Returns:
-            Dict mapping filenames to feed URLs
+            Dict mapping feed indexes to feed URLs
         """
         feeds = {}
         try:
@@ -39,7 +39,7 @@ class FeedlyFetcher:
                 for i, line in enumerate(f, 1):
                     url = line.strip()
                     if url and not url.startswith('#'):  # Skip empty lines and comments
-                        feeds[f'feedly{i}.atom'] = url
+                        feeds[i] = url
             return feeds
         except FileNotFoundError:
             logger.error(f"Error: {self.feeds_file} not found. Please create it with one feed URL per line.")
@@ -121,11 +121,33 @@ class FeedlyFetcher:
         # Ensure the output directory exists
         os.makedirs(output_directory, exist_ok=True)
 
-        # Fetch each feed
+        # Get existing feed files in the output directory
+        existing_feed_files = [f for f in os.listdir(output_directory) if f.startswith('feedly') and f.endswith('.atom')]
+        
+        # Extract existing numbers
+        existing_numbers = set()
+        for file in existing_feed_files:
+            # Extract the number between "feedly" and ".atom"
+            try:
+                num = int(file.replace('feedly', '').replace('.atom', ''))
+                existing_numbers.add(num)
+            except ValueError:
+                continue
+
+        # Fetch each feed with unique filenames
         logger.info(f"Found {len(feeds)} feeds to process...")
         successful_feeds = {}
         
-        for filename, url in feeds.items():
+        for index, url in feeds.items():
+            # Find the next available number
+            next_num = index
+            while next_num in existing_numbers:
+                next_num += 1
+            
+            # Create filename
+            filename = f'feedly{next_num}.atom'
+            existing_numbers.add(next_num)  # Mark this number as used
+            
             logger.info(f"Processing feed: {url}")
             output_file_path = os.path.join(output_directory, filename)
             if self.fetch_feed(url, output_file_path):

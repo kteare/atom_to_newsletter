@@ -22,7 +22,6 @@ import backoff
 import requests
 import openai
 from urllib.parse import urlparse
-import shutil
 
 from twtw.fetchers.feedly import FeedlyFetcher
 from twtw.formatters.html import HtmlConverter
@@ -61,17 +60,12 @@ def parse_args():
     parser.add_argument("--skip-fetch", action="store_true", help="Skip fetching feeds (use existing files)")
     parser.add_argument("--skip-process", action="store_true", help="Skip processing articles")
     parser.add_argument("--skip-convert", action="store_true", help="Skip converting to HTML")
-    parser.add_argument("--skip-today-folder", action="store_true", help="Skip checking for and including atom feeds from 'today' folder")
     parser.add_argument("--limit", type=int, default=0, help="Limit the number of articles to process from each feed (0 for all)")
     parser.add_argument("--model", help="Specify OpenAI model to use (default: from config)")
     parser.add_argument("--use-local-model", action="store_true", help="Use local rule-based model instead of OpenAI API")
     parser.add_argument("--test-html-extraction", action="store_true", help="Test HTML content extraction while still using OpenAI")
     parser.add_argument("--max-retries", type=int, default=5, help="Maximum number of retries for API calls (default: 5)")
     parser.add_argument("--timeout", type=int, default=60, help="Timeout in seconds for API calls (default: 60)")
-    
-    # For backward compatibility, still support the old --use-today-folder option but make it do nothing
-    # since it's now the default behavior
-    parser.add_argument("--use-today-folder", action="store_true", help=argparse.SUPPRESS)
     
     return parser.parse_args()
 
@@ -307,7 +301,10 @@ async def process_articles(
 **Source:** {source}
 **Published:** {published}
 **Classification:** {article.category}
+**Confidence Score:** {article.category_score:.2f if article.category_score else 'N/A'}
 **Subcategory:** {article.subcategory or 'N/A'}
+**Word Count:** {article.features.get('word_count', 0)}
+**Reading Time:** {article.reading_time} min
 
 {content}
 
@@ -348,7 +345,7 @@ async def process_articles(
                     f.write(article_markdown)
                     f.write("\n---\n\n")
         
-        # Create a reading list too
+        # Create a basic reading list too
         reading_list_path = os.path.join(output_dir, "reading_list.md")
         with open(reading_list_path, "w", encoding="utf-8") as f:
             f.write("# That Was The Week - Reading List\n\n")
@@ -534,7 +531,10 @@ async def process_articles(
                           - Source
                           - Published Date
                           - Classification (primary category)
+                          - Confidence Score (0-1)
                           - Subcategory or topic
+                          - Word count
+                          - Estimated reading time
                        c. If an image URL is provided, include the image
                        d. The article content limited to 500 words, properly formatted
                        e. End with a "Read more" link to the original article
@@ -549,7 +549,10 @@ async def process_articles(
                     **Source:** Source Name
                     **Published:** Publication Date
                     **Classification:** Tech News
+                    **Confidence Score:** 0.85
                     **Subcategory:** Mobile Technology
+                    **Word Count:** 450
+                    **Reading Time:** 2 min
                     
                     Article content goes here...
                     
@@ -561,6 +564,7 @@ async def process_articles(
                     Provide your response as a JSON object with these fields:
                     {
                         "category": "category name",
+                        "confidence": "confidence score between 0-1",
                         "subcategory": "more specific topic area",
                         "formatted_markdown": "the complete formatted markdown for the article"
                     }
@@ -635,6 +639,13 @@ async def process_articles(
                         word_count = len(content_for_processing.split())
                         reading_time = max(1, word_count // 200)
                         
+                        classification_info = f"""**Classification:** {article.category}
+**Confidence Score:** {article.category_score:.2f if article.category_score else 'N/A'}
+**Subcategory:** {article.subcategory or 'N/A'}
+**Word Count:** {word_count}
+**Reading Time:** {reading_time} min
+"""
+                        
                         # Create basic formatted content with classification metadata
                         article.processed_content = f"""### [{title}]({url})
 
@@ -642,7 +653,10 @@ async def process_articles(
 **Source:** {source}
 **Published:** {published}
 **Classification:** {article.category}
+**Confidence Score:** {article.category_score:.2f if article.category_score else 'N/A'}
 **Subcategory:** {article.subcategory or 'N/A'}
+**Word Count:** {word_count}
+**Reading Time:** {reading_time} min
 
 {content_for_processing[:500] + "..." if len(content_for_processing) > 500 else content_for_processing}
 
@@ -656,36 +670,6 @@ async def process_articles(
                         categories_markdown[category].append(article.processed_content)
                         
                         logger.info(f"Processed article with raw response: {article.title} - Category: {article.category}")
-                        continue
-                        
-                    # Parse JSON response
-                    try:
-                        response_data = json.loads(response.choices[0].message.content)
-                        
-                        # Extract the category and formatted markdown
-                        category = response_data.get("category", "Unclassified")
-                        formatted_markdown = response_data.get("formatted_markdown", "")
-                        
-                        # Extract additional classification metadata
-                        subcategory = response_data.get("subcategory", "N/A")
-                        
-                        # Update the article with the processed data
-                        article.category = category
-                        # Keep confidence score processing for backward compatibility
-                        confidence = response_data.get("confidence", "N/A")
-                        article.category_score = float(confidence) if isinstance(confidence, (int, float)) or (isinstance(confidence, str) and confidence.replace('.', '', 1).isdigit()) else None
-                        article.subcategory = subcategory
-                        
-                        # Use the formatted markdown directly
-                        article.processed_content = formatted_markdown
-                        
-                        # Store the formatted markdown in the category dictionary
-                        if category not in categories_markdown:
-                            categories_markdown[category] = []
-                        
-                        categories_markdown[category].append(formatted_markdown)
-                        
-                        logger.info(f"Successfully processed with OpenAI: {article.title} - Category: {article.category}, Subcategory: {article.subcategory}")
                     except json.JSONDecodeError as e:
                         logger.warning(f"Error parsing OpenAI JSON response: {e}. Using raw response.")
                         
@@ -731,6 +715,14 @@ async def process_articles(
                     word_count = len(content_for_processing.split())
                     reading_time = max(1, word_count // 200)
                     
+                    # Add classification metadata
+                    classification_info = f"""**Classification:** {article.category}
+**Confidence Score:** {article.category_score:.2f if article.category_score else 'N/A'}
+**Subcategory:** {article.subcategory or 'N/A'}
+**Word Count:** {word_count}
+**Reading Time:** {reading_time} min
+"""
+                    
                     # Create basic formatted content with classification metadata
                     article.processed_content = f"""### [{title}]({url})
 
@@ -738,7 +730,10 @@ async def process_articles(
 **Source:** {source}
 **Published:** {published}
 **Classification:** {article.category}
+**Confidence Score:** {article.category_score:.2f if article.category_score else 'N/A'}
 **Subcategory:** {article.subcategory or 'N/A'}
+**Word Count:** {word_count}
+**Reading Time:** {reading_time} min
 
 {content_for_processing[:500] + "..." if len(content_for_processing) > 500 else content_for_processing}
 
@@ -787,25 +782,6 @@ async def process_articles(
                 f.write(article_markdown)
                 f.write("\n---\n\n")
     
-    # Create a reading list too
-    reading_list_path = os.path.join(output_dir, "reading_list.md")
-    with open(reading_list_path, "w", encoding="utf-8") as f:
-        f.write("# That Was The Week - Reading List\n\n")
-        f.write(f"Generated on {datetime.now().strftime('%B %d, %Y')}\n\n")
-        
-        # Group by category for the reading list
-        for category in sorted_categories:
-            f.write(f"## {category}\n\n")
-            
-            # Get articles in this category
-            category_articles = [a for a in processed_articles if a.category == category]
-            
-            # Add links to each article
-            for article in category_articles:
-                f.write(f"- [{article.title}]({article.url})\n")
-            
-            f.write("\n")
-    
     # Log results
     logger.info(f"Successfully processed {len(processed_articles)} articles")
     if failed_articles:
@@ -823,24 +799,6 @@ async def process_articles(
 async def async_main():
     """
     Asynchronous main function.
-    
-    This function orchestrates the entire TWTW process:
-    1. Fetches feeds (if not skipped)
-    2. Processes articles (if not skipped)
-    3. Generates markdown files
-    4. Converts markdown to HTML (if not skipped)
-    
-    Command-line options:
-    - --feeds: Path to file containing feed URLs (default: feeds.txt)
-    - --output-dir: Directory for output files
-    - --refresh-cache: Force refresh cached content
-    - --skip-fetch: Skip fetching feeds (use existing files)
-    - --skip-process: Skip processing articles
-    - --skip-convert: Skip converting to HTML
-    - --limit: Maximum number of articles to process per feed (0 for all)
-    - --model: Specify OpenAI model to use
-    - --use-local-model: Use local rule-based model instead of OpenAI API
-    - --skip-today-folder: Skip including atom feeds from the 'today' folder (by default, feeds from 'today' folder are included)
     """
     # Parse command-line arguments
     args = parse_args()
@@ -861,82 +819,6 @@ async def async_main():
     os.makedirs(output_dir, exist_ok=True)
     logger.info(f"Using output directory: {output_dir}")
     
-    # Helper function to find a unique filename and copy a feed file
-    def copy_feed_file_with_unique_name(source_path, output_dir, original_filename, existing_numbers, feed_files):
-        """
-        Copy a feed file from source to output directory with a unique feedly*.atom filename
-        
-        Args:
-            source_path: Full path to the source file
-            output_dir: Directory to copy the file to
-            original_filename: Original filename (may not be in feedly*.atom format)
-            existing_numbers: Set of numbers already used in existing feedly*.atom files
-            feed_files: List of feed files to append the new filename to
-            
-        Returns:
-            The new filename that was used
-        """
-        # If the file doesn't match the feedly*.atom pattern, generate a unique name
-        if not (original_filename.startswith('feedly') and original_filename.endswith('.atom')):
-            # Find the next available number
-            next_num = 1
-            while next_num in existing_numbers:
-                next_num += 1
-            
-            new_feed_file = f'feedly{next_num}.atom'
-            existing_numbers.add(next_num)  # Mark as used
-            output_feed_path = os.path.join(output_dir, new_feed_file)
-            
-            # Copy with the new name
-            shutil.copy2(source_path, output_feed_path)
-            logger.info(f"Copied {original_filename} to {new_feed_file} in output directory")
-            
-            # Add to our feed_files list for processing
-            if new_feed_file not in feed_files:
-                feed_files.append(new_feed_file)
-                
-            return new_feed_file
-        else:
-            # The file already follows our naming convention - check if it exists
-            output_feed_path = os.path.join(output_dir, original_filename)
-            if not os.path.exists(output_feed_path):
-                # Safe to copy with original name
-                shutil.copy2(source_path, output_feed_path)
-                logger.info(f"Copied {original_filename} to output directory")
-                
-                # Add to our feed_files list for processing
-                if original_filename not in feed_files:
-                    feed_files.append(original_filename)
-                    
-                return original_filename
-            else:
-                # File exists - create a new name
-                try:
-                    # Extract the number
-                    original_num = int(original_filename.replace('feedly', '').replace('.atom', ''))
-                    
-                    # Find next available number
-                    next_num = original_num
-                    while next_num in existing_numbers:
-                        next_num += 1
-                    
-                    new_feed_file = f'feedly{next_num}.atom'
-                    existing_numbers.add(next_num)
-                    new_output_path = os.path.join(output_dir, new_feed_file)
-                    
-                    # Copy with the new name
-                    shutil.copy2(source_path, new_output_path)
-                    logger.info(f"Feed file {original_filename} already exists, copied as {new_feed_file}")
-                    
-                    # Add to our feed_files list for processing
-                    if new_feed_file not in feed_files:
-                        feed_files.append(new_feed_file)
-                        
-                    return new_feed_file
-                except ValueError:
-                    logger.warning(f"Could not generate unique name for {original_filename}, skipping")
-                    return None
-    
     articles = []
     
     try:
@@ -950,33 +832,24 @@ async def async_main():
                 logger.error("No feeds were successfully fetched")
                 return 1
             
-            # Initialize feed_files in the skip_fetch branch before trying to append to it
-            feed_files = list(fetched_feeds.keys())
+            # Step a: Process Atom feeds
+            feeds_tasks = []
+            for feed_file in fetched_feeds.keys():
+                feed_path = os.path.join(output_dir, feed_file)
+                task = parse_atom_feed(feed_path, args.limit)
+                feeds_tasks.append(task)
             
-            # If --use-today-folder option is specified, look for atom feeds in the 'today' folder
-            if not args.skip_today_folder and os.path.isdir('today'):
-                logger.info("Checking 'today' folder for additional atom feeds...")
-                today_feeds = [f for f in os.listdir('today') if f.endswith('.atom')]
-                
-                if today_feeds:
-                    logger.info(f"Found {len(today_feeds)} atom feeds in 'today' folder")
-                    
-                    # Find existing feedly*.atom files to avoid name conflicts
-                    existing_feed_files = [f for f in os.listdir(output_dir) if f.startswith('feedly') and f.endswith('.atom')]
-                    existing_numbers = set()
-                    for file in existing_feed_files:
-                        try:
-                            num = int(file.replace('feedly', '').replace('.atom', ''))
-                            existing_numbers.add(num)
-                        except ValueError:
-                            continue
-                    
-                    # Copy these feeds to the output directory with unique names
-                    for feed_file in today_feeds:
-                        today_feed_path = os.path.join('today', feed_file)
-                        copy_feed_file_with_unique_name(today_feed_path, output_dir, feed_file, existing_numbers, feed_files)
-                else:
-                    logger.info("No atom feeds found in 'today' folder")
+            # Gather results from all feeds
+            feed_results = await asyncio.gather(*feeds_tasks)
+            for result in feed_results:
+                articles.extend(result)
+            
+            logger.info(f"Found {len(articles)} articles across all feeds")
+        else:
+            logger.info("Skipping feed fetching as requested")
+            
+            # Look for XML files in the output directory
+            feed_files = [f for f in os.listdir(output_dir) if f.endswith('.atom')]
             
             if not feed_files:
                 logger.error("No feed files found in the output directory")
@@ -994,51 +867,7 @@ async def async_main():
             for result in feed_results:
                 articles.extend(result)
             
-            # Deduplicate articles by URL to ensure uniqueness
-            unique_articles = []
-            seen_urls = set()
-            
-            for article in articles:
-                if article.url not in seen_urls:
-                    seen_urls.add(article.url)
-                    unique_articles.append(article)
-                else:
-                    logger.info(f"Skipping duplicate article: {article.title} ({article.url})")
-            
-            # Replace the original articles list with the deduplicated list
-            articles = unique_articles
-            
-            logger.info(f"Found {len(articles)} unique articles across all feeds")
-        else:
-            logger.info("Skipping feed fetching as requested")
-            
-            # Look for XML files in the output directory
-            feed_files = [f for f in os.listdir(output_dir) if f.endswith('.atom')]
-            
-            # If --use-today-folder option is specified, look for atom feeds in the 'today' folder
-            if not args.skip_today_folder and os.path.isdir('today'):
-                logger.info("Checking 'today' folder for additional atom feeds...")
-                today_feeds = [f for f in os.listdir('today') if f.endswith('.atom')]
-                
-                if today_feeds:
-                    logger.info(f"Found {len(today_feeds)} atom feeds in 'today' folder")
-                    
-                    # Find existing feedly*.atom files to avoid name conflicts
-                    existing_feed_files = [f for f in os.listdir(output_dir) if f.startswith('feedly') and f.endswith('.atom')]
-                    existing_numbers = set()
-                    for file in existing_feed_files:
-                        try:
-                            num = int(file.replace('feedly', '').replace('.atom', ''))
-                            existing_numbers.add(num)
-                        except ValueError:
-                            continue
-                    
-                    # Copy these feeds to the output directory with unique names
-                    for feed_file in today_feeds:
-                        today_feed_path = os.path.join('today', feed_file)
-                        copy_feed_file_with_unique_name(today_feed_path, output_dir, feed_file, existing_numbers, feed_files)
-                else:
-                    logger.info("No atom feeds found in 'today' folder")
+            logger.info(f"Found {len(articles)} articles across all feeds")
         
         # Step 2: Process articles and generate markdown directly
         if not args.skip_process and articles:
