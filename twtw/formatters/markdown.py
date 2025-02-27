@@ -37,107 +37,221 @@ class MarkdownFormatter:
         Returns:
             Extracted paragraphs as HTML
         """
-        # Check if content already has HTML tags
-        is_html = bool(re.match(r'^\s*<\w+', html_content))
+        # Safety check - if content is None or empty
+        if not html_content:
+            return ""
+            
+        # Pre-process step: Check for content that is split character by character
+        # This can happen with some content feeds where newlines are inserted between characters
+        # Look for patterns like "A\nm\na\nz\no\nn" or "A m a z o n"
+        if '\n' in html_content and len(html_content.strip()) > 20:
+            # Check for single characters or spaces separated by newlines
+            lines = html_content.split('\n')
+            stripped_lines = [line.strip() for line in lines]
+            
+            # If more than 60% of non-empty lines are single characters or spaces, it's likely character-by-character splitting
+            non_empty_lines = [line for line in stripped_lines if line]
+            single_char_lines = [line for line in non_empty_lines if len(line) <= 1]
+            
+            if len(non_empty_lines) > 5 and len(single_char_lines) / len(non_empty_lines) > 0.6:
+                logger.warning("Detected character-by-character splitting with newlines, joining characters")
+                # Join all characters, ignoring newlines
+                joined_text = ''.join(non_empty_lines)
+                # Remove any HTML tags
+                clean_text = re.sub(r'<[^>]*>', ' ', joined_text)
+                clean_text = re.sub(r'\s+', ' ', clean_text).strip()
+                
+                # Create a paragraph with the cleaned text
+                if clean_text:
+                    # Count words for the log
+                    word_count = len(clean_text.split())
+                    logger.info(f"Created {word_count} words from character-by-character text")
+                    # Return up to word_limit words
+                    words = clean_text.split()
+                    if len(words) > word_limit:
+                        return f"<p>{' '.join(words[:word_limit])}...</p>"
+                    return f"<p>{clean_text}</p>"
+                return ""
+        
+        # Check for content with spaces between individual characters (like "A m a z o n")
+        if re.search(r'\b(\w \w \w \w)\b', html_content):
+            logger.warning("Detected character-by-character splitting with spaces, joining characters")
+            # This pattern identifies text where individual characters are separated by spaces
+            joined_text = re.sub(r'(\w) (\w) (\w)', r'\1\2\3', html_content)
+            joined_text = re.sub(r'(\w) (\w)', r'\1\2', joined_text)  # Run twice to catch overlapping patterns
+            joined_text = re.sub(r'(\w) (\w)', r'\1\2', joined_text)
+            
+            # If HTML tags are mixed with spaced characters, clean them
+            clean_text = re.sub(r'<[^>]*>', ' ', joined_text)
+            clean_text = re.sub(r'\s+', ' ', clean_text).strip()
+            
+            # Create a paragraph with the cleaned text
+            if clean_text:
+                # Count words for the log
+                word_count = len(clean_text.split())
+                logger.info(f"Created {word_count} words from space-separated character text")
+                # Return up to word_limit words
+                words = clean_text.split()
+                if len(words) > word_limit:
+                    return f"<p>{' '.join(words[:word_limit])}...</p>"
+                return f"<p>{clean_text}</p>"
+            return ""
+            
+        # Special case detection for character-by-character splitting with newlines
+        # This pattern is common when text has been poorly processed
+        if re.search(r'(<[^>]*>)?\s*\n\s*\w\s*\n\s*\w\s*\n\s*\w', html_content):
+            logger.warning("Detected complex character-by-character splitting pattern with newlines, fixing...")
+            # Join all the characters that are split across lines
+            lines = html_content.split('\n')
+            joined_text = ''.join([line.strip() for line in lines])
+            # Remove any HTML tags
+            clean_text = re.sub(r'<[^>]*>', ' ', joined_text)
+            clean_text = re.sub(r'\s+', ' ', clean_text).strip()
+            
+            # Create a paragraph with the cleaned text
+            if clean_text:
+                # Count words for the log
+                word_count = len(clean_text.split())
+                logger.info(f"Created {word_count} words from character-by-character text")
+                # Return up to word_limit words
+                words = clean_text.split()
+                if len(words) > word_limit:
+                    return f"<p>{' '.join(words[:word_limit])}...</p>"
+                return f"<p>{clean_text}</p>"
+            return ""
+            
+        # Check if content already has HTML tags - look for complete tags, not just angle brackets
+        is_html = bool(re.search(r'<[a-zA-Z][^>]*>(.*?)</[a-zA-Z][^>]*>', html_content, re.DOTALL))
         
         if is_html:
             try:
-                soup = BeautifulSoup(html_content, 'html.parser')
+                # Clean up potential raw HTML fragments that shouldn't be rendered
+                html_content = re.sub(r'<\s*!DOCTYPE.*?>', '', html_content, flags=re.IGNORECASE | re.DOTALL)
+                html_content = re.sub(r'<html.*?>.*?</html>', '', html_content, flags=re.IGNORECASE | re.DOTALL)
+                html_content = re.sub(r'<\s*meta.*?>', '', html_content, flags=re.IGNORECASE)
+                html_content = re.sub(r'<\s*link.*?>', '', html_content, flags=re.IGNORECASE)
+                html_content = re.sub(r'<\s*script.*?>.*?</\s*script\s*>', '', html_content, flags=re.IGNORECASE | re.DOTALL)
+                html_content = re.sub(r'<\s*style.*?>.*?</\s*style\s*>', '', html_content, flags=re.IGNORECASE | re.DOTALL)
                 
-                # Remove script and style elements
-                for element in soup(['script', 'style']):
-                    element.decompose()
-                
-                # Split content by double newlines if no block elements found
-                block_elements = soup.find_all(['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote', 'ul', 'ol', 'div'])
-                if not block_elements:
-                    # No block elements found, split by double newlines and create paragraphs
-                    text_content = soup.get_text()
-                    paragraphs = re.split(r'\n\s*\n', text_content)
+                # Check for content that might be HTML-like but not properly formed
+                # This happens when angle brackets are present but the content is not proper HTML
+                # For example: <p>T<h>i<s> <i>s> <n>o<t> <p>r<o>p<e>r <H>T<M>L</p>
+                if re.search(r'<[a-zA-Z][^>]{0,1}>[^<]{0,1}<', html_content):
+                    logger.warning("Detected malformed HTML with character-by-character splitting, treating as plain text")
+                    # If this pattern is found, treat as plain text instead
+                    is_html = False
+                    # Clean the content by removing the angle brackets
+                    html_content = re.sub(r'<[^>]*>', ' ', html_content)
+                    html_content = re.sub(r'\s+', ' ', html_content).strip()
+                else:
+                    soup = BeautifulSoup(html_content, 'html.parser')
+                    
+                    # Remove script and style elements
+                    for element in soup(['script', 'style']):
+                        element.decompose()
+                    
+                    # Split content by double newlines if no block elements found
+                    block_elements = soup.find_all(['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote', 'ul', 'ol', 'div'])
+                    if not block_elements:
+                        # No block elements found, split by double newlines and create paragraphs
+                        text_content = soup.get_text(separator=' ')
+                        paragraphs = re.split(r'\n\s*\n', text_content)
+                        total_words = 0
+                        result = ""
+                        for para in paragraphs:
+                            if para.strip():
+                                para_text = para.strip()
+                                para_words = len(para_text.split())
+                                if total_words + para_words <= word_limit:
+                                    result += f"<p>{para_text}</p>\n\n"
+                                    total_words += para_words
+                                else:
+                                    # If we would exceed the word limit, truncate the paragraph
+                                    words = para_text.split()
+                                    remaining_words = word_limit - total_words
+                                    if remaining_words > 0:
+                                        result += f"<p>{' '.join(words[:remaining_words])}...</p>\n\n"
+                                    break
+                        return result
+                    
+                    # Extract block elements
+                    elements = []
+                    for tag in ['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote', 'ul', 'ol', 'div']:
+                        elements.extend(soup.find_all(tag))
+                    
+                    # Sort elements by their position in the document
+                    elements.sort(key=lambda x: x.sourceline or 0)
+                    
+                    # Extract content up to the word limit
                     total_words = 0
                     result = ""
-                    for para in paragraphs:
-                        if para.strip():
-                            para_text = para.strip()
-                            para_words = len(para_text.split())
-                            if total_words + para_words <= word_limit:
-                                result += f"<p>{para_text}</p>\n\n"
-                                total_words += para_words
-                            else:
-                                # If we would exceed the word limit, truncate the paragraph
-                                words = para_text.split()
+                    for element in elements:
+                        element_text = element.get_text(' ', strip=True)
+                        element_words = len(element_text.split())
+                        
+                        if total_words + element_words <= word_limit:
+                            result += str(element) + "\n\n"
+                            total_words += element_words
+                        else:
+                            # If we would exceed the word limit, truncate the element
+                            if element.name in ['p', 'div', 'blockquote']:
+                                words = element_text.split()
                                 remaining_words = word_limit - total_words
                                 if remaining_words > 0:
-                                    result += f"<p>{' '.join(words[:remaining_words])}...</p>\n\n"
-                                break
-                    return result
-                
-                # Extract block elements
-                elements = []
-                for tag in ['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote', 'ul', 'ol', 'div']:
-                    elements.extend(soup.find_all(tag))
-                
-                # Sort elements by their position in the document
-                elements.sort(key=lambda x: x.sourceline or 0)
-                
-                # Extract content up to the word limit
-                total_words = 0
-                result = ""
-                for element in elements:
-                    element_text = element.get_text()
-                    element_words = len(element_text.split())
+                                    # Create a new element with truncated text
+                                    truncated_element = copy.copy(element)
+                                    truncated_element.string = ' '.join(words[:remaining_words]) + '...'
+                                    result += str(truncated_element) + "\n\n"
+                            break
                     
-                    if total_words + element_words <= word_limit:
-                        result += str(element) + "\n\n"
-                        total_words += element_words
-                    else:
-                        # If we would exceed the word limit, truncate the element
-                        if element.name in ['p', 'div', 'blockquote']:
-                            words = element_text.split()
-                            remaining_words = word_limit - total_words
-                            if remaining_words > 0:
-                                # Create a new element with truncated text
-                                truncated_element = copy.copy(element)
-                                truncated_element.string = ' '.join(words[:remaining_words]) + '...'
-                                result += str(truncated_element) + "\n\n"
-                        break
-                
-                logger.info(f"Extracted {total_words} words from HTML content")
-                return result
+                    logger.info(f"Extracted {total_words} words from HTML content")
+                    return result
             
             except Exception as e:
                 logger.error(f"Error extracting paragraphs: {e}")
                 # Fallback to simple text extraction
                 return self._truncate_html_by_words(html_content, word_limit)
-        else:
-            # Content is not HTML, treat it as plain text and wrap in paragraph tags
-            text = html_content.strip()
-            if not text:
-                return ""
-            
-            # Split by double newlines to identify paragraphs
-            paragraphs = re.split(r'\n\s*\n', text)
-            total_words = 0
-            result = ""
-            
-            for para in paragraphs:
-                if para.strip():
-                    para_text = para.strip()
-                    para_words = len(para_text.split())
-                    
-                    if total_words + para_words <= word_limit:
-                        result += f"<p>{para_text}</p>\n\n"
-                        total_words += para_words
-                    else:
-                        # If we would exceed the word limit, truncate the paragraph
-                        words = para_text.split()
-                        remaining_words = word_limit - total_words
-                        if remaining_words > 0:
-                            result += f"<p>{' '.join(words[:remaining_words])}...</p>\n\n"
-                        break
-            
-            logger.info(f"Created {total_words} words of paragraphs from plain text")
-            return result
+        
+        # If we reach here, either the content is not HTML or we've converted it to plain text
+        # Content is not HTML, treat it as plain text and wrap in paragraph tags
+        # First, clean up any HTML fragments that might be in the text
+        text = re.sub(r'<\s*!DOCTYPE.*?>', '', html_content, flags=re.IGNORECASE | re.DOTALL)
+        text = re.sub(r'<html.*?>.*?</html>', '', text, flags=re.IGNORECASE | re.DOTALL)
+        text = re.sub(r'<\s*meta.*?>', '', text, flags=re.IGNORECASE)
+        text = re.sub(r'<\s*link.*?>', '', text, flags=re.IGNORECASE)
+        text = re.sub(r'<\s*script.*?>.*?</\s*script\s*>', '', text, flags=re.IGNORECASE | re.DOTALL)
+        text = re.sub(r'<\s*style.*?>.*?</\s*style\s*>', '', text, flags=re.IGNORECASE | re.DOTALL)
+        
+        # Remove any remaining angle brackets
+        text = re.sub(r'<[^>]*>', ' ', text)
+        text = re.sub(r'\s+', ' ', text).strip()
+        
+        if not text:
+            return ""
+        
+        # Split by double newlines to identify paragraphs
+        paragraphs = re.split(r'\n\s*\n', text)
+        total_words = 0
+        result = ""
+        
+        for para in paragraphs:
+            if para.strip():
+                para_text = para.strip()
+                para_words = len(para_text.split())
+                
+                if total_words + para_words <= word_limit:
+                    result += f"<p>{para_text}</p>\n\n"
+                    total_words += para_words
+                else:
+                    # If we would exceed the word limit, truncate the paragraph
+                    words = para_text.split()
+                    remaining_words = word_limit - total_words
+                    if remaining_words > 0:
+                        result += f"<p>{' '.join(words[:remaining_words])}...</p>\n\n"
+                    break
+        
+        logger.info(f"Created {total_words} words of paragraphs from plain text")
+        return result
     
     def _truncate_html_by_words(self, html, word_limit):
         """
@@ -225,8 +339,10 @@ class MarkdownFormatter:
             except (ValueError, TypeError):
                 if article.published:
                     metadata.append(f"**Published:** {article.published}")
-        if article.reading_time:
-            metadata.append(f"**Reading Time:** {article.reading_time} min")
+        if hasattr(article, 'category') and article.category:
+            metadata.append(f"**Classification:** {article.category}")
+        if hasattr(article, 'subcategory') and article.subcategory:
+            metadata.append(f"**Subcategory:** {article.subcategory}")
         if article.domain:
             metadata.append(f"**Domain:** {article.domain}")
         
@@ -235,83 +351,60 @@ class MarkdownFormatter:
     
     def format_article(self, article: Article) -> str:
         """
-        Format a single article as Markdown.
+        Format an article for display in the newsletter.
         
         Args:
             article: The article to format
             
         Returns:
-            Formatted article as Markdown
+            Formatted article as a string
         """
         output = []
         
         # Add title with link
-        output.append(f"## [{article.title}]({article.url})\n")
+        output.append(f"### [{article.title}]({article.url})")
+        output.append("")
         
-        # Add metadata in a div for special processing
-        metadata = self.format_article_metadata(article)
-        if metadata:
-            output.append('<div class="metadata">\n')
-            output.append(metadata)
-            output.append('\n</div>\n')
+        # Add metadata
+        meta = self.format_article_metadata(article)
+        output.append(meta)
+        output.append("")
         
-        # Add image if available - prioritize the main image from content features
-        main_image = None
-        if article.content_features and 'images' in article.content_features and article.content_features['images']:
-            # Find the best image - prefer larger images that aren't icons
-            best_image = None
-            max_dimension = 0
-            
-            for img in article.content_features['images']:
-                # Skip small images that are likely icons
-                width = int(img.get('width', '0') or '0')
-                height = int(img.get('height', '0') or '0')
-                
-                # Calculate image importance based on dimensions and position
-                dimension_score = width * height if width > 0 and height > 0 else 0
-                
-                # If no dimensions, assume it's a regular image
-                if dimension_score == 0:
-                    dimension_score = 500 * 300  # Default assumed size
-                
-                # Prefer images with higher dimensions
-                if dimension_score > max_dimension:
-                    max_dimension = dimension_score
-                    best_image = img
-            
-            if best_image:
-                main_image = best_image
+        # Check for image
+        if article.image_url:
+            output.append(f"![{article.title}]({article.image_url})")
+            output.append("")
         
-        # If we found a main image from content features, use it
-        if main_image:
-            width = main_image.get('width', '800') or '800'
-            height = main_image.get('height', 'auto') or 'auto'
-            output.append(f'\n<img width="{width}" src="{main_image["src"]}" height="{height}"><br>\n')
-        # Fallback to the article's image_url if no content images found
-        elif article.image_url:
-            output.append(f'\n<img width="800" src="{article.image_url}" height="auto"><br>\n')
+        # Add content with 1500-word limit - RULE #5: Use the processed content from OpenAI
+        if hasattr(article, 'processed_content') and article.processed_content:
+            # Use the processed content from OpenAI directly
+            output.append(article.processed_content)
+        elif article.content:
+            # Fallback to extracting from HTML if processed_content is not available
+            extracted = self._extract_paragraphs_with_limit(article.content, word_limit=1500)
+            if extracted:
+                output.append(extracted)
+            elif article.full_text:
+                # Fallback to full_text if content extraction failed
+                extracted = self._extract_paragraphs_with_limit(article.full_text, word_limit=1500)
+                if extracted:
+                    output.append(extracted)
+                else:
+                    # Last resort, use summary
+                    output.append(article.summary if article.summary else "*No content available*")
+            else:
+                # If no content, use summary
+                output.append(article.summary if article.summary else "*No content available*")
+        else:
+            # If no content, use summary
+            output.append(article.summary if article.summary else "*No content available*")
         
-        # Add content with 500-word limit
-        if article.content:
-            # Process HTML content to preserve paragraph structure and limit to 500 words
-            formatted_content = self._extract_paragraphs_with_limit(article.content, 500)
-            output.append(f"\n{formatted_content}\n")
-        elif article.full_text:
-            # Process HTML content to preserve paragraph structure and limit to 500 words
-            formatted_content = self._extract_paragraphs_with_limit(article.full_text, 500)
-            output.append(f"\n{formatted_content}\n")
-        # Fallback to summary
-        elif article.summary:
-            output.append(f"\n{article.summary}\n")
+        # Add "Read more" link at the end
+        output.append("")
+        output.append(f"[Read more]({article.url})")
+        output.append("")
         
-        # Add read more link
-        if article.read_more_url:
-            output.append(f"\n[Read more]({article.read_more_url})\n")
-        
-        # Add separator
-        output.append("\n---\n\n")
-        
-        return ''.join(output)
+        return "\n".join(output)
     
     def format_article_original(self, article: Article) -> str:
         """
@@ -403,7 +496,8 @@ class MarkdownFormatter:
                 for subcategory, subcategory_articles in subcategorized.items():
                     content.append(f"### {subcategory}")
                     for article in subcategory_articles:
-                        content.append(self._format_article(article))
+                        # Extend the content list with the lines from _format_article
+                        content.extend(self._format_article(article))
                         content.append("---")
                         content.append("")
                 
@@ -412,13 +506,15 @@ class MarkdownFormatter:
                 if uncategorized:
                     content.append("### Other")
                     for article in uncategorized:
-                        content.append(self._format_article(article))
+                        # Extend the content list with the lines from _format_article
+                        content.extend(self._format_article(article))
                         content.append("---")
                         content.append("")
             else:
                 # No subcategories, just add all articles
                 for article in category_articles:
-                    content.append(self._format_article(article))
+                    # Extend the content list with the lines from _format_article
+                    content.extend(self._format_article(article))
                     content.append("---")
                     content.append("")
         
@@ -473,158 +569,79 @@ class MarkdownFormatter:
         
         return "\n".join(content)
     
-    def _format_article(self, article: Article) -> str:
+    def _format_article(self, article: Article) -> List[str]:
         """
-        Format a single article as a string with metadata and content.
-        
-        This method creates a formatted version of the article with title, metadata, 
-        and content, ensuring proper paragraph structure is maintained.
-        
-        Args:
-            article: The article to format
-            
-        Returns:
-            Formatted article as a string
+        Format a single article in Markdown format.
+        Returns a list of lines representing the article content.
         """
-        output = []
+        lines = []
         
-        # Add title with link
-        output.append(f"## [{article.title}]({article.url})\n")
+        # Add title with header formatting
+        lines.append(f"### {article.title}")
+        lines.append("")
         
-        # Add metadata in a div for special processing
-        metadata = self.format_article_metadata(article)
-        if metadata:
-            output.append(metadata + "\n")
+        # Add metadata div
+        lines.append('<div class="metadata">')
         
-        # Add image if available - prioritize the main image from content features
-        main_image = None
-        if article.content_features and 'images' in article.content_features and article.content_features['images']:
-            # Find the best image - prefer larger images that aren't icons
-            best_image = None
-            max_dimension = 0
+        # Source
+        if article.source:
+            lines.append(f"**Source:** {article.source}")
             
-            for img in article.content_features['images']:
-                # Skip small images that are likely icons
-                width = int(img.get('width', '0') or '0')
-                height = int(img.get('height', '0') or '0')
-                
-                # Calculate image importance based on dimensions and position
-                dimension_score = width * height if width > 0 and height > 0 else 0
-                
-                # If no dimensions, assume it's a regular image
-                if dimension_score == 0:
-                    dimension_score = 500 * 300  # Default assumed size
-                
-                # Prefer images with higher dimensions
-                if dimension_score > max_dimension:
-                    max_dimension = dimension_score
-                    best_image = img
+        # Date - check if it exists, use published instead of date
+        if article.published:
+            try:
+                published_date = datetime.strptime(article.published, "%Y-%m-%dT%H:%M:%SZ").strftime("%B %d, %Y")
+                lines.append(f"**Date:** {published_date}")
+            except (ValueError, TypeError):
+                lines.append(f"**Date:** {article.published}")
             
-            if best_image:
-                main_image = best_image
+        # Category and subcategory
+        if article.category:
+            category_text = article.category
+            if article.subcategory:
+                category_text += f" / {article.subcategory}"
+            lines.append(f"**Category:** {category_text}")
+            
+        # Reading time
+        if article.reading_time:
+            lines.append(f"**Reading time:** {article.reading_time} min")
+            
+        lines.append('</div>')
+        lines.append("")
         
-        # If we found a main image from content features, use it
-        if main_image:
-            width = main_image.get('width', '800') or '800'
-            height = main_image.get('height', 'auto') or 'auto'
-            output.append(f'<p style="margin-bottom: 1em;"><img alt="{article.title}" src="{main_image["src"]}"/></p>\n')
-        # Fallback to the article's image_url if no content images found
+        # Add main image if available
+        if hasattr(article, 'features') and article.features and 'main_image' in article.features and article.features['main_image']:
+            lines.append(f"![{article.title}]({article.features['main_image']})")
+            lines.append("")
         elif article.image_url:
-            output.append(f'<p style="margin-bottom: 1em;"><img alt="{article.title}" src="{article.image_url}"/></p>\n')
+            lines.append(f"![{article.title}]({article.image_url})")
+            lines.append("")
         
-        # Process content to ensure proper paragraph structure
-        article_content = ""
-        if article.content:
-            article_content = article.content
+        # Add content
+        if article.processed_content:
+            lines.append(article.processed_content)
+        elif article.content:
+            paragraphs = self._extract_paragraphs_with_limit(article.content, 1500)
+            lines.extend(paragraphs)
         elif article.full_text:
-            article_content = article.full_text
+            paragraphs = self._extract_paragraphs_with_limit(article.full_text, 1500)
+            lines.extend(paragraphs)
         elif article.summary:
-            article_content = article.summary
-        
-        if article_content:
-            # Check if content is already HTML or plain text
-            is_html = bool(re.match(r'^\s*<\w+', article_content))
-            
-            # Clean up common prefixes that might be duplicated
-            common_prefixes = [
-                "Listen to this post:",
-                "Subscribe to receive"
-            ]
-            for prefix in common_prefixes:
-                if article_content.count(prefix) > 1:
-                    first_index = article_content.find(prefix)
-                    second_index = article_content.find(prefix, first_index + 1)
-                    if first_index >= 0 and second_index >= 0:
-                        article_content = article_content[:second_index] + article_content[second_index + len(prefix):]
-            
-            if is_html:
-                # For HTML content, use the extract_paragraphs method to limit words while preserving structure
-                formatted_content = self._extract_paragraphs_with_limit(article_content, 500)
-                output.append(formatted_content)
-            else:
-                # For plain text, we need to create proper paragraph structure
-                paragraphs = []
-                
-                # Try to split by double newlines first
-                if '\n\n' in article_content:
-                    paragraphs = [p.strip() for p in re.split(r'\n\s*\n', article_content) if p.strip()]
-                # If that didn't work or resulted in just one paragraph, try to split by sentences
-                if len(paragraphs) <= 1 and len(article_content) > 500 and '. ' in article_content:
-                    # Split by sentence-ending punctuation followed by space and capital letter
-                    sentences = re.split(r'([.!?]\s+)(?=[A-Z])', article_content)
-                    current_para = ''
-                    sentence_count = 0
-                    paragraphs = []
-                    
-                    for i, part in enumerate(sentences):
-                        if i % 2 == 0:  # Content part
-                            current_para += part
-                            sentence_count += 1
-                        else:  # Separator (punctuation)
-                            current_para += part
-                            # Group roughly 2-3 sentences per paragraph
-                            if sentence_count >= 2 and len(current_para) > 200:
-                                paragraphs.append(current_para)
-                                current_para = ''
-                                sentence_count = 0
-                
-                    # Add any remaining content
-                    if current_para:
-                        paragraphs.append(current_para)
-                
-                # If we still don't have paragraphs, use the original content
-                if not paragraphs:
-                    paragraphs = [article_content]
-                
-                # Format each paragraph with proper HTML tags
-                word_count = 0
-                word_limit = 500
-                formatted_paragraphs = []
-                
-                for paragraph in paragraphs:
-                    if paragraph.strip():
-                        para_words = len(paragraph.split())
-                        if word_count + para_words <= word_limit:
-                            formatted_paragraphs.append(f'<p style="margin-bottom: 1em;">{paragraph.strip()}</p>')
-                            word_count += para_words
-                        else:
-                            # If we'd exceed the word limit, truncate the paragraph
-                            words = paragraph.split()
-                            remaining_words = word_limit - word_count
-                            if remaining_words > 0:
-                                formatted_paragraphs.append(f'<p style="margin-bottom: 1em;">{" ".join(words[:remaining_words])}...</p>')
-                            break
-                
-                output.append('\n'.join(formatted_paragraphs) + '\n')
+            lines.append(article.summary)
+        else:
+            lines.append("*No content available*")
         
         # Add read more link
-        read_more_url = article.read_more_url or article.url
-        output.append(f'<p style="margin-bottom: 1em;"><a href="{read_more_url}">Read more...</a></p>\n')
+        if article.url:
+            lines.append("")
+            lines.append(f"[Read more]({article.url})")
         
         # Add separator
-        output.append("<hr/>\n")
+        lines.append("")
+        lines.append("---")
+        lines.append("")
         
-        return ''.join(output)
+        return lines
     
     def format_snippets(self, articles: List[Article]) -> str:
         """

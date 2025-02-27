@@ -74,9 +74,19 @@ class ArticleFetcher:
             async with async_timeout.timeout(REQUEST_TIMEOUT):
                 async with self.session.get(url) as response:
                     response.raise_for_status()
-                    return await response.text()
-        except Exception as e:
+                    content = await response.text()
+                    # Report success to rate limiter
+                    self.rate_limiter.report_success(domain)
+                    return content
+        except (aiohttp.ClientError, asyncio.TimeoutError, asyncio.CancelledError) as e:
+            # Report failure to rate limiter
+            self.rate_limiter.report_failure(domain)
             print(f"Error fetching {url}: {e}")
+            return None
+        except Exception as e:
+            # Report failure to rate limiter
+            self.rate_limiter.report_failure(domain)
+            print(f"Unexpected error fetching {url}: {e}")
             return None
 
     async def process_article(self, url: str, fallback_content: Optional[str] = None) -> Optional[Dict]:
@@ -123,10 +133,19 @@ class ArticleFetcher:
             images = []
             seen_image_urls = set()  # Track seen image URLs to avoid duplicates
             
+            # Initialize extracted_text to hold our content in case image extraction fails
+            extracted_text = None
+            
             if downloaded:
+                # First convert XML to markdown, so we have content even if image extraction fails
+                extracted_text = trafilatura.extract(
+                    downloaded,
+                    include_images=True,
+                    output_format='markdown'
+                )
+                
                 try:
-                    # Parse the XML to extract images
-                    from bs4 import BeautifulSoup
+                    # Parse the XML to extract images - avoid importing BeautifulSoup here, we already have it
                     soup = BeautifulSoup(downloaded, 'xml')
                     img_tags = soup.find_all('img')
                     
@@ -162,16 +181,11 @@ class ArticleFetcher:
                                 'height': height
                             })
                     
-                    # Convert XML back to text but preserve image tags
-                    downloaded = trafilatura.extract(
-                        downloaded,
-                        include_images=True,
-                        output_format='markdown'
-                    )
                 except Exception as e:
                     print(f"Error extracting images from XML: {e}")
+                    # Continue with the extracted text we already have
 
-            if not downloaded:
+            if not extracted_text:
                 # Fallback to BeautifulSoup if trafilatura fails
                 soup = BeautifulSoup(content, 'html.parser')
                 
@@ -221,7 +235,15 @@ class ArticleFetcher:
                                 'height': height
                             })
                     
-                    downloaded = article.get_text(separator=' ', strip=True)
+                    # Extract text content as markdown-friendly format rather than raw HTML
+                    paragraphs = []
+                    for p in article.find_all(['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6']):
+                        paragraphs.append(p.get_text(strip=True))
+                    
+                    if paragraphs:
+                        extracted_text = "\n\n".join(paragraphs)
+                    else:
+                        extracted_text = article.get_text(separator=' ', strip=True)
                 else:
                     # Fallback to body content
                     img_tags = soup.find_all('img')
@@ -256,8 +278,36 @@ class ArticleFetcher:
                                 'height': height
                             })
                     
-                    downloaded = soup.get_text(separator=' ', strip=True)
-
+                    # Extract paragraphs from the body
+                    paragraphs = []
+                    for p in soup.find_all(['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6']):
+                        if p.get_text(strip=True):  # Skip empty paragraphs
+                            paragraphs.append(p.get_text(strip=True))
+                    
+                    if paragraphs:
+                        extracted_text = "\n\n".join(paragraphs)
+                    else:
+                        # Last resort: Use soup.get_text but clean it up
+                        raw_text = soup.get_text()
+                        # Split by newlines and re-join non-empty lines
+                        lines = [line.strip() for line in raw_text.split("\n") if line.strip()]
+                        extracted_text = "\n\n".join(lines)
+            
+            # Use the extracted text - make sure we're not including raw HTML
+            if extracted_text:
+                # Clean up the text - remove any raw HTML-like content that might have been included
+                text = re.sub(r'<\s*!DOCTYPE.*?>', '', extracted_text, flags=re.IGNORECASE | re.DOTALL)
+                text = re.sub(r'<html.*?>.*?</html>', '', text, flags=re.IGNORECASE | re.DOTALL)
+                text = re.sub(r'<\s*meta.*?>', '', text, flags=re.IGNORECASE)
+                text = re.sub(r'<\s*link.*?>', '', text, flags=re.IGNORECASE)
+                text = re.sub(r'<\s*script.*?>.*?</\s*script\s*>', '', text, flags=re.IGNORECASE | re.DOTALL)
+                text = re.sub(r'<\s*style.*?>.*?</\s*style\s*>', '', text, flags=re.IGNORECASE | re.DOTALL)
+                
+                # Normalize whitespace
+                text = re.sub(r'\s+', ' ', text).strip()
+            else:
+                text = ""
+            
             # Check for paywall indicators
             paywall_detected = False
             paywall_terms = [
@@ -290,8 +340,8 @@ class ArticleFetcher:
             else:
                 paywall_suspicion = False
             
-            if downloaded:
-                lower_text = downloaded.lower()
+            if text:
+                lower_text = text.lower()
                 
                 # Check for paywall terms in the content
                 if any(term in lower_text for term in paywall_terms):
@@ -305,9 +355,6 @@ class ArticleFetcher:
             elif paywall_suspicion:
                 paywall_detected = True
                 print(f"Likely paywall detected for {url} (known paywall site)")
-            
-            # Clean up the text
-            text = re.sub(r'\s+', ' ', downloaded).strip() if downloaded else ""
             
             # Generate a better summary
             summary = ""
@@ -354,7 +401,8 @@ class ArticleFetcher:
 
             return {
                 'content': text,
-                'features': features
+                'features': features,
+                'images': images
             }
 
         except Exception as e:

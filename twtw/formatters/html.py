@@ -276,6 +276,15 @@ class HtmlConverter:
                 url = match.group(2)
                 return f'<a href="{url}">{text}</a>'
             
+            # Add a function to convert Markdown image tags to HTML img tags
+            def convert_md_image(match):
+                alt_text = match.group(1)
+                image_url = match.group(2)
+                return f'<img src="{image_url}" alt="{alt_text}">'
+            
+            # Convert markdown images to HTML img tags (process images before links to avoid confusion)
+            md_text = re.sub(r'!\[(.*?)\]\((.*?)\)', convert_md_image, md_text)
+            
             # Convert markdown links to HTML links
             md_text = re.sub(r'\[(.*?)\]\((.*?)\)', convert_md_link, md_text)
             
@@ -306,6 +315,9 @@ class HtmlConverter:
             html = str(soup)
             
             # Additional cleanup
+            # Fix any markdown image syntax that wasn't properly converted
+            html = re.sub(r'!\[(.*?)\]\((.*?)\)', r'<img src="\2" alt="\1">', html)
+            
             # Fix any markdown link syntax that wasn't properly converted
             html = re.sub(r'\[(.*?)\]\((.*?)\)', r'<a href="\2">\1</a>', html)
 

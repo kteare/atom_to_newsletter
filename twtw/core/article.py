@@ -1,8 +1,8 @@
 """
 Article data model for TWTW.
 """
-from dataclasses import dataclass
-from typing import Dict, Optional
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional
 
 @dataclass
 class Article:
@@ -21,4 +21,9 @@ class Article:
     reading_time: Optional[int] = None
     category_score: Optional[Dict[str, float]] = None
     full_text: Optional[str] = None
-    content_features: Optional[Dict] = None 
+    content: Optional[str] = None
+    processed_content: Optional[str] = None  # Content processed by OpenAI
+    subcategory: Optional[str] = None
+    entities: Optional[str] = None  # Key people, companies, technologies
+    features: Optional[Dict] = field(default_factory=dict)
+    category: str = "Unclassified" 
