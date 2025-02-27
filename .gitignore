@@ -1,0 +1,75 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+ENV/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Project specific
+.env
+cache/
+output*/
+*.log
+.DS_Store
+
+# TWTW specific
+# Feed files (except example)
+feeds*.txt
+!feeds.example.txt
+
+# Atom files
+*.atom
+
+# Generated newsletters
+newsletter*.md
+newsletter*.html
+reading_list*.md
+reading_list*.html
+contents*.md
+contents*.html
+snippets*.md
+snippets*.html
+original*.md
+original*.html
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Config files that might contain sensitive info
+config*.yaml
+config*.yml
+config*.json
+!config.example.yaml
+
+# Temporary files
+*.bak
+*.tmp
+*~ 
