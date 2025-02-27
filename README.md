@@ -123,6 +123,16 @@ output:
     - "Startup of the Week"
 ```
 
+The `.env` file can also control the output directory behavior:
+
+```
+# Use a fixed output directory
+TWTW_OUTPUT_DIR=output
+
+# OR use a timestamped output directory (creates directories like 'output_2025-02-26:18:40:50')
+TWTW_OUTPUT_DIR=output_datetimestamp
+```
+
 ### Usage
 
 1. Create a `feeds.txt` file with your Feedly feed URLs (one per line):
@@ -146,6 +156,12 @@ output:
    ```
 
    By default, the application will process all articles in the feed. You can use the `--limit` option to specify a maximum number of articles to process, or set it to `0` to process all articles (which is now the default behavior).
+   
+   The output directory is determined by:
+   1. The `--output-dir` command-line argument, if provided
+   2. The `TWTW_OUTPUT_DIR` environment variable in your `.env` file
+   3. If `TWTW_OUTPUT_DIR` contains the string "datetimestamp", it will be replaced with the current date and time
+   4. If neither is set, it defaults to `output_YYYY-MM-DD:HH:MM:SS` with the current timestamp
 
 ## User Guide
 
@@ -218,15 +234,19 @@ After running the generator, you'll find the following files in your output dire
 1. **Viewing Locally**:
    - Open the generated HTML files in any web browser:
      ```bash
-     # On macOS
-     open output_YYYY-MM-DD:HH:MM:SS/newsletter.html
+     # If using a fixed output directory (TWTW_OUTPUT_DIR=output in .env)
+     open output/newsletter.html  # macOS
+     xdg-open output/newsletter.html  # Linux
+     start output/newsletter.html  # Windows
      
-     # On Linux
-     xdg-open output_YYYY-MM-DD:HH:MM:SS/newsletter.html
-     
-     # On Windows
-     start output_YYYY-MM-DD:HH:MM:SS/newsletter.html
+     # If using timestamped directories (TWTW_OUTPUT_DIR=output_datetimestamp in .env)
+     # Replace YYYY-MM-DD:HH:MM:SS with the actual timestamp
+     open output_YYYY-MM-DD:HH:MM:SS/newsletter.html  # macOS
+     xdg-open output_YYYY-MM-DD:HH:MM:SS/newsletter.html  # Linux
+     start output_YYYY-MM-DD:HH:MM:SS/newsletter.html  # Windows
      ```
+     
+   - The application will log the output directory path in the console, making it easy to locate your files.
 
 2. **Sharing Options**:
    - Copy the HTML file to a web server

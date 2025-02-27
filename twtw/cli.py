@@ -13,6 +13,7 @@ from typing import Dict, List, Optional
 import aiohttp
 import tqdm
 from bs4 import BeautifulSoup
+from dotenv import load_dotenv
 
 from twtw.fetchers.feedly import FeedlyFetcher
 from twtw.formatters.html import HtmlConverter
@@ -303,6 +304,9 @@ async def async_main():
     """
     Main entry point for the application.
     """
+    # Explicitly reload environment variables from .env file
+    load_dotenv(override=True)
+    
     # Parse command-line arguments
     args = parse_args()
     
@@ -312,7 +316,14 @@ async def async_main():
     else:
         # Format: YYYY-MM-DD:HH:MM:SS
         datetime_str = datetime.now().strftime('%Y-%m-%d:%H:%M:%S')
-        output_dir = os.getenv('TWTW_OUTPUT_DIR', f'output_{datetime_str}')
+        env_output_dir = os.getenv('TWTW_OUTPUT_DIR', f'output_{datetime_str}')
+        
+        # Check if the environment variable contains the special placeholder
+        if 'datetimestamp' in env_output_dir:
+            # Replace the placeholder with the actual timestamp
+            output_dir = env_output_dir.replace('datetimestamp', datetime_str)
+        else:
+            output_dir = env_output_dir
     
     # Ensure the output directory exists
     os.makedirs(output_dir, exist_ok=True)
