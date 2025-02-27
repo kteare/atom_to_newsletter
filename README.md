@@ -17,7 +17,6 @@ This is a sophisticated newsletter generation system that automatically collects
 3. **Content Analysis**:
    - The system uses NLP (Natural Language Processing) techniques to:
      - Classify articles into categories (Tech, AI, Venture Capital, etc.)
-     - Calculate sentiment scores for articles
      - Generate summaries of article content
      - Estimate reading time
 
@@ -26,12 +25,13 @@ This is a sophisticated newsletter generation system that automatically collects
      - Article classification
      - Subcategory classification
      - Text summarization
+     - Content extraction and formatting
 
 5. **Newsletter Generation**:
    - The system organizes articles into different sections based on their categories.
    - It creates multiple output formats:
      - Full newsletter with article summaries
-     - Reading list with just article titles and links
+     - Reading list with just article titles and links organized by category
      - Contents page with a table of contents
      - Original format with more detailed article information
      - Snippets with brief excerpts
@@ -42,7 +42,7 @@ This is a sophisticated newsletter generation system that automatically collects
 
 ## Project Structure
 
-The project has been reorganized into a proper Python package structure:
+The project has been organized into a proper Python package structure:
 
 ```
 twtw/
@@ -73,7 +73,7 @@ twtw/
 
 1. Clone this repository:
    ```bash
-   git clone https://github.com/yourusername/twtw.git
+   git clone https://github.com/kteare/atom_to_newsletter.git
    cd twtw
    ```
 
@@ -131,6 +131,9 @@ TWTW_OUTPUT_DIR=output
 
 # OR use a timestamped output directory (creates directories like 'output_2025-02-26:18:40:50')
 TWTW_OUTPUT_DIR=output_datetimestamp
+
+# Required: OpenAI API key for article processing
+OPENAI_API_KEY=your_api_key_here
 ```
 
 ### Usage
@@ -143,16 +146,17 @@ TWTW_OUTPUT_DIR=output_datetimestamp
 
 2. Run the application:
    ```bash
-   twtw
+   python -m twtw.cli
    ```
 
 3. Command-line options:
    ```bash
-   twtw --help
-   twtw --feeds custom_feeds.txt --output-dir custom_output
-   twtw --refresh-cache  # Force refresh the cache
-   twtw --skip-fetch  # Skip fetching feeds
-   twtw --limit 0  # Process all articles in the feed (no limit)
+   python -m twtw.cli --help
+   python -m twtw.cli --feeds custom_feeds.txt --output-dir custom_output
+   python -m twtw.cli --refresh-cache  # Force refresh the cache
+   python -m twtw.cli --skip-fetch  # Skip fetching feeds
+   python -m twtw.cli --limit 0  # Process all articles in the feed (no limit)
+   python -m twtw.cli --use-local-model  # Use local model instead of OpenAI
    ```
 
    By default, the application will process all articles in the feed. You can use the `--limit` option to specify a maximum number of articles to process, or set it to `0` to process all articles (which is now the default behavior).
@@ -193,25 +197,25 @@ TWTW_OUTPUT_DIR=output_datetimestamp
    source venv/bin/activate  # On Windows: venv\Scripts\activate
    
    # Run with default settings
-   twtw
+   python -m twtw.cli
    ```
 
 2. **Advanced Usage**:
    ```bash
    # Use a custom feeds file and output directory
-   twtw --feeds my_feeds.txt --output-dir newsletters/weekly
+   python -m twtw.cli --feeds my_feeds.txt --output-dir newsletters/weekly
    
    # Process only the first 5 articles from each feed
-   twtw --limit 5
+   python -m twtw.cli --limit 5
    
    # Skip fetching and use previously downloaded feeds
-   twtw --skip-fetch
+   python -m twtw.cli --skip-fetch
    
    # Force refresh the article cache
-   twtw --refresh-cache
+   python -m twtw.cli --refresh-cache
    
    # Skip both fetching and processing, just regenerate HTML
-   twtw --skip-fetch --skip-process
+   python -m twtw.cli --skip-fetch --skip-process
    ```
 
 ### Output Files
@@ -223,7 +227,7 @@ After running the generator, you'll find the following files in your output dire
 
 2. **Markdown Files**:
    - `newsletter.md`: Full newsletter with article summaries organized by category
-   - `reading_list.md`: Simple list of article titles and links
+   - `reading_list.md`: Simple list of article titles and links, organized by category
    
 3. **HTML Files**:
    - `newsletter.html`: HTML version of the newsletter, ready to view in a browser
