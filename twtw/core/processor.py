@@ -11,10 +11,38 @@ import async_timeout
 from bs4 import BeautifulSoup
 import trafilatura
 from tqdm import tqdm
-from nltk.tokenize import sent_tokenize
+import os
+import sys
+import logging
+import json
+import time
+from datetime import datetime
+from pathlib import Path
 
 from twtw.core.cache import CacheManager
 from twtw.utils.http import RateLimiter, REQUEST_TIMEOUT, MAX_CONCURRENT_REQUESTS
+
+# Create a simple regex-based sentence tokenizer to replace NLTK dependency
+def simple_sentence_tokenize(text):
+    """
+    A simple regex-based sentence tokenizer that doesn't rely on NLTK.
+    
+    Args:
+        text: Text to split into sentences
+        
+    Returns:
+        List of sentences
+    """
+    if not text:
+        return []
+        
+    # Basic sentence splitting pattern
+    pattern = r'(?<!\w\.\w.)(?<![A-Z][a-z]\.)(?<=\.|\?|\!)\s'
+    sentences = re.split(pattern, text)
+    return [s.strip() for s in sentences if s.strip()]
+
+# Use our simple tokenizer instead of NLTK's sent_tokenize
+sent_tokenize = simple_sentence_tokenize
 
 class ArticleFetcher:
     """

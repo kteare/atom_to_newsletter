@@ -16,11 +16,91 @@ from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 import re
 import json
-import tiktoken
 import time
 import backoff
 import requests
-import openai
+
+# Add fallback for tiktoken
+try:
+    import tiktoken
+except ImportError:
+    print("tiktoken package not found. Installing it now...")
+    import subprocess
+    import sys
+    try:
+        # Use --no-deps to avoid pulling in complex dependencies
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "tiktoken", "--no-deps"])
+        import tiktoken
+        print("tiktoken installed successfully.")
+    except Exception as e:
+        print(f"Could not install tiktoken: {e}")
+        print("Using a simple word-based counter as fallback (less accurate for OpenAI API).")
+        # Create a simple fallback implementation
+        class SimpleTokenCounter:
+            def encode(self, text):
+                # This is an approximation - 1 token ≈ 4 chars in English
+                return [1] * (len(text.split()) + len(text) // 4)
+                
+        class SimpleTiktoken:
+            def get_encoding(self, _):
+                return SimpleTokenCounter()
+                
+        # Create a module-like object
+        class TiktokenModule:
+            def __init__(self):
+                self.tiktoken = SimpleTiktoken()
+                
+            def get_encoding(self, model_name):
+                return self.tiktoken.get_encoding(model_name)
+                
+        tiktoken = TiktokenModule()
+
+# Make sure markdown is installed
+try:
+    import markdown
+except ImportError:
+    print("markdown package not found. Installing it now...")
+    import subprocess
+    try:
+        # Install markdown without dependencies
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "markdown", "--no-deps"])
+        import markdown
+        print("markdown installed successfully.")
+    except Exception as e:
+        print(f"Could not install markdown: {e}")
+        print("Creating simple markdown parser as fallback.")
+        
+        # Simple markdown parser fallback
+        class SimpleMarkdown:
+            @staticmethod
+            def markdown(text):
+                # Very basic markdown to HTML conversion
+                text = re.sub(r'# (.*?)\n', r'<h1>\1</h1>\n', text)
+                text = re.sub(r'## (.*?)\n', r'<h2>\1</h2>\n', text)
+                text = re.sub(r'### (.*?)\n', r'<h3>\1</h3>\n', text)
+                text = re.sub(r'\*\*(.*?)\*\*', r'<strong>\1</strong>', text)
+                text = re.sub(r'\*(.*?)\*', r'<em>\1</em>', text)
+                text = re.sub(r'\[(.*?)\]\((.*?)\)', r'<a href="\2">\1</a>', text)
+                text = re.sub(r'^- (.*?)$', r'<li>\1</li>', text, flags=re.MULTILINE)
+                return text
+                
+        # Replace markdown module with our simple implementation
+        class MarkdownModule:
+            def __init__(self):
+                pass
+                
+            def markdown(self, text):
+                return SimpleMarkdown.markdown(text)
+                
+        markdown = MarkdownModule()
+
+try:
+    import openai
+except (ImportError, TimeoutError) as e:
+    print(f"Error importing OpenAI module: {e}")
+    print("This might be due to network connectivity issues.")
+    print("Try ensuring you have a stable internet connection or use the --offline mode if available.")
+    sys.exit(1)
 from urllib.parse import urlparse
 import shutil
 
